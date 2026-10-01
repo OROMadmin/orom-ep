@@ -41,6 +41,7 @@ jobs:
         run: |
           cp docs/naver_ep.tsv naver_ep.tsv 2>/dev/null || true
           python build_naver_ep.py
+          mkdir -p docs
           cp naver_ep.tsv docs/naver_ep.tsv
           python - <<'PY'
           import json, datetime, os
