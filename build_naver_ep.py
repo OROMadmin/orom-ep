@@ -426,7 +426,10 @@ def exclude_reason(p, ci):
     if p.get("selling") != "T": return "판매안함"
     if float(p.get("price") or 0) <= 0: return "가격0원"
     if p.get("sold_out") == "T": return "품절"
-    if any(e in (ci.get("allnames") or "") for e in EXCLUDE_CATS): return "비상품분류(정책)"
+    # 소속 분류의 '최상위 이름'이 전부 비상품 분류일 때만 제외 (부분일치 금지:
+    #  '다이어리 컨텐츠별 보기'가 '컨텐츠'에 걸려 2027 다이어리 40여 개가 빠지던 버그 수정, 2026-10-01)
+    tops = {seg.split(" > ")[0].strip() for seg in (ci.get("allnames") or "").split(" | ") if seg.strip()}
+    if tops and tops <= set(EXCLUDE_CATS): return "비상품분류(정책)"
     if re.search(r"테스트|개인결제", p.get("product_name") or ""): return "테스트/개인결제"
     if not (p.get("list_image") or p.get("detail_image")): return "이미지없음"
     if shipping_fee(p) is None: return "배송비판단불가"
