@@ -121,6 +121,10 @@ INFER_RULES = [
      "set": {"order_made": "Y", "product_flag": "도매",
              "event_words": "[무료 샘플 제공] 직접 찾아뵙고 상담해 드립니다"}},
 ]
+# review_count 출처: page = 상품 상세페이지 '상품후기 N' 표시값 그대로 (2026-10-01 대표 결정)
+#   실패 시 Cafe24 EP 사본 값 유지. snapshot 으로 바꾸면 사본만 사용.
+REVIEW_SOURCE = os.environ.get("OROM_REVIEW_SOURCE", "page")
+REVIEW_RE = re.compile(r"상품후기\s*<span>\s*([\d,]+)\s*</span>")
 CHECK_IMAGES = os.environ.get("OROM_CHECK_IMAGES", "1") == "1"   # _dburl 이미지 404 → 원본 이미지로 대체
 
 BANNED_TITLE = re.compile(
@@ -511,6 +515,35 @@ def _head(url):
         return getattr(e, "code", 0)
 
 
+def _review_count(pid):
+    url = f"https://orom.co.kr/product/detail.html?product_no={pid}"
+    for _ in range(3):
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 orom-ep"})
+            with urllib.request.urlopen(req, timeout=20) as r:
+                m = REVIEW_RE.search(r.read().decode("utf-8", "ignore"))
+            return int(m.group(1).replace(",", "")) if m else None
+        except Exception:
+            time.sleep(1.5)
+    return None
+
+
+def apply_page_reviews(rows):
+    """상세페이지에 표시된 리뷰 수를 그대로 사용. 못 읽은 상품은 기존 값(사본) 유지."""
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(8) as ex:
+        counts = list(ex.map(_review_count, [r["id"] for r in rows]))
+    ok = miss = 0
+    for r, c in zip(rows, counts):
+        if c is None:
+            miss += 1
+            continue
+        r["review_count"] = str(c) if c > 0 else ""
+        ok += 1
+    total = sum(c or 0 for c in counts)
+    log(f"  리뷰수: 상세페이지 표시값 {ok}건 반영 (합계 {total:,}), 읽기 실패 {miss}건은 사본 값 유지")
+
+
 def fix_images(rows):
     """Cafe24 _dburl 사본 이미지가 없는 상품(404) → 원본 목록이미지로 대체. 둘 다 없으면 오류로 남김."""
     from concurrent.futures import ThreadPoolExecutor
@@ -594,6 +627,9 @@ def main():
                 inferred += 1
     if inferred:
         log(f"  추정 규칙 적용 {inferred}건 (사본 이후 신상품: 기업/단체 분류 → 주문제작·도매·이벤트문구)")
+
+    if REVIEW_SOURCE == "page":
+        apply_page_reviews(rows)
 
     if CHECK_IMAGES:
         fix_images(rows)
