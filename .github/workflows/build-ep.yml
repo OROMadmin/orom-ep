@@ -1,0 +1,61 @@
+# 오롬 네이버 EP 자동 생성 — 구글시트(게시 CSV) → build_naver_ep.py → GitHub Pages
+# 네이버 수집(KST 01·10·14·18·22시) 약 45분 전에 실행. GitHub cron은 UTC 기준.
+name: build-naver-ep
+
+on:
+  schedule:
+    - cron: "13 15 * * *"   # KST 00:13
+    - cron: "13 0 * * *"    # KST 09:13
+    - cron: "13 4 * * *"    # KST 13:13
+    - cron: "13 8 * * *"    # KST 17:13
+    - cron: "13 12 * * *"   # KST 21:13
+  workflow_dispatch: {}      # Actions 탭에서 수동 실행 버튼
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-ep
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install openpyxl   # 저장소의 cafe24_snapshot_*.xlsx 읽기용
+
+      # 이전 파일을 기준으로 ±20% 급변 검사 → 실패하면 커밋 안 함 = 네이버는 직전 정상 파일을 계속 받음
+      - name: Build EP from Google Sheet
+        env:
+          OROM_SHEET_PRODUCTS_CSV:  ${{ secrets.OROM_SHEET_PRODUCTS_CSV }}
+          OROM_SHEET_OVERRIDES_CSV: ${{ secrets.OROM_SHEET_OVERRIDES_CSV }}
+          # 비워두면 저장소의 cafe24_snapshot_*.xlsx 사용 (최신 사본을 시트에 붙여넣었다면 시크릿 등록)
+          OROM_SHEET_SNAPSHOT_CSV:  ${{ secrets.OROM_SHEET_SNAPSHOT_CSV }}
+        run: |
+          cp docs/naver_ep.tsv naver_ep.tsv 2>/dev/null || true
+          python build_naver_ep.py
+          cp naver_ep.tsv docs/naver_ep.tsv
+          python - <<'PY'
+          import json, datetime, os
+          n = sum(1 for _ in open("docs/naver_ep.tsv", encoding="utf-8")) - 1
+          json.dump({"built_at_kst": (datetime.datetime.utcnow() + datetime.timedelta(hours=9)).strftime("%Y-%m-%d %H:%M"),
+                     "rows": n, "run": os.environ.get("GITHUB_RUN_ID")},
+                    open("docs/status.json", "w"), ensure_ascii=False)
+          PY
+          cp build.log docs/build.log
+
+      # status.json이 매번 바뀌므로 항상 커밋됨 → 60일 비활동으로 스케줄이 꺼지는 것도 방지
+      - name: Publish
+        run: |
+          git config user.name  "orom-ep-bot"
+          git config user.email "orom-ep-bot@users.noreply.github.com"
+          git add docs/
+          git commit -m "EP $(date -u +%F' '%H:%M)Z" || echo "no change"
+          git push
