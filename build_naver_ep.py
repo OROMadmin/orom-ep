@@ -318,7 +318,7 @@ def load_snapshot():
     log(f"  Cafe24 EP 사본: {os.path.basename(f)} ({len(snap)}건, 기준일 {m.group(1) if m else '파일명에 날짜 없음'})")
     if m:
         d = datetime.strptime(m.group(1) + ("-01" if len(m.group(1)) == 7 else ""), "%Y-%m-%d")
-        if (datetime.now() - d).days > 14:
+        if (datetime.now() - d).days > 14 and REVIEW_SOURCE != "page":
             log(f"  ⚠ 사본이 {(datetime.now() - d).days}일 지남 — 리뷰 수가 실제보다 적게 나감(많게는 안 나감), 신규상품은 리뷰수 공란")
     return snap, f
 
@@ -528,20 +528,42 @@ def _review_count(pid):
     return None
 
 
+REVIEW_CACHE = os.environ.get("OROM_REVIEW_CACHE", os.path.join(BASE, "docs", "review_counts.json"))
+
+
 def apply_page_reviews(rows):
-    """상세페이지에 표시된 리뷰 수를 그대로 사용. 못 읽은 상품은 기존 값(사본) 유지."""
+    """상세페이지에 표시된 리뷰 수를 그대로 사용.
+    하루 1회(그날 첫 실행 = KST 00:13)만 전체 페이지를 읽고 docs/review_counts.json 에 저장,
+    같은 날 나머지 실행은 캐시 재사용 (캐시에 없는 신상품만 새로 읽음). 못 읽은 상품은 사본 값 유지."""
     from concurrent.futures import ThreadPoolExecutor
-    with ThreadPoolExecutor(8) as ex:
-        counts = list(ex.map(_review_count, [r["id"] for r in rows]))
+    from datetime import timedelta
+    today = (datetime.utcnow() + timedelta(hours=9)).strftime("%Y-%m-%d")
+    cache = {}
+    try:
+        cache = json.load(open(REVIEW_CACHE, encoding="utf-8"))
+    except Exception:
+        pass
+    fresh = cache.get("date") == today and not os.environ.get("OROM_REVIEW_FORCE")
+    counts = dict(cache.get("counts", {})) if fresh else {}
+    todo = [r["id"] for r in rows if r["id"] not in counts]
+    if todo:
+        with ThreadPoolExecutor(8) as ex:
+            for pid, c in zip(todo, ex.map(_review_count, todo)):
+                if c is not None:
+                    counts[pid] = c
     ok = miss = 0
-    for r, c in zip(rows, counts):
+    for r in rows:
+        c = counts.get(r["id"])
         if c is None:
             miss += 1
             continue
         r["review_count"] = str(c) if c > 0 else ""
         ok += 1
-    total = sum(c or 0 for c in counts)
-    log(f"  리뷰수: 상세페이지 표시값 {ok}건 반영 (합계 {total:,}), 읽기 실패 {miss}건은 사본 값 유지")
+    os.makedirs(os.path.dirname(REVIEW_CACHE), exist_ok=True)
+    json.dump({"date": today, "counts": counts}, open(REVIEW_CACHE, "w", encoding="utf-8"))
+    total = sum(counts.get(r["id"], 0) for r in rows)
+    how = f"캐시 재사용({today}), 신규 {len(todo)}건만 조회" if fresh else f"전체 {len(todo)}건 새로 조회"
+    log(f"  리뷰수: 상세페이지 표시값 {ok}건 반영 (합계 {total:,}) — {how}. 읽기 실패 {miss}건은 사본 값 유지")
 
 
 def fix_images(rows):
