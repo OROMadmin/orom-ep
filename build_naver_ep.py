@@ -105,7 +105,7 @@ COLUMNS = [
     "naver_category", "condition", "order_made", "product_flag",
     "model_number", "brand", "maker", "origin", "event_words", "benefit_price",
     "search_tag", "minimum_purchase_quantity", "review_count", "shipping",
-    "attribute", "age_group", "gender",
+    "attribute", "option_detail", "age_group", "gender",
 ]
 LOCKED = {"id", "price_pc", "price_mobile", "normal_price", "benefit_price",
           "link", "mobile_link", "shipping", "review_count"}
@@ -462,6 +462,13 @@ def validate(rows):
         if BANNED_CHARS.search(t): warns.append(f"#{pid} 상품명 특수문자 '{BANNED_CHARS.search(t).group()}'")
         if not r["image_link"].startswith(("http://", "https://")): errs.append(f"#{pid} 이미지 URL")
         if len(r["image_link"]) > 255: errs.append(f"#{pid} 이미지 URL 255자 초과")
+        od = r.get("option_detail") or ""
+        if od:
+            parts = od.split("|")
+            if len(od) > 1000 or len(parts) > 50:
+                warns.append(f"#{pid} option_detail 1000자/50개 초과 → 비움"); r["option_detail"] = ""
+            elif not all(re.fullmatch(r"[^^|]+\^\d+", x) for x in parts):
+                warns.append(f"#{pid} option_detail 형식 오류(옵션명^가격) → 비움"); r["option_detail"] = ""
         if r["add_image_link"] and len(r["add_image_link"].split("|")) > 10:
             errs.append(f"#{pid} 추가이미지 10개 초과")
         if not re.fullmatch(r"-1|\d{1,7}", r["shipping"] or ""): errs.append(f"#{pid} 배송비 형식")
@@ -659,6 +666,20 @@ def main():
         if dead:
             log(f"  [제외] 대표이미지 응답없음 {dead[:10]} — 네이버 수집 오류 방지")
             rows[:] = [r for r in rows if not r.get("_image_dead")]
+
+    # 자동 생성값(저장소 auto_fields.tsv: 상품속성·추가이미지). 시트 overrides 가 있으면 그쪽이 우선
+    AUTO_FIELDS = os.path.join(BASE, "auto_fields.tsv")
+    if not a.mirror_only and os.path.exists(AUTO_FIELDS):
+        auto = {r["id"]: r for r in csv.DictReader(open(AUTO_FIELDS, encoding="utf-8"), delimiter="\t")}
+        n = 0
+        for r in rows:
+            x = auto.get(r["id"])
+            if x:
+                for k in ("attribute", "add_image_link"):
+                    if x.get(k):
+                        r[k] = x[k]
+                n += 1
+        log(f"  자동값(auto_fields.tsv) 적용 {n}건 — 상품속성·추가이미지")
 
     if not a.mirror_only:
         ov = load_overrides()
