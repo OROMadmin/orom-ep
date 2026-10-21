@@ -675,11 +675,11 @@ def main():
         for r in rows:
             x = auto.get(r["id"])
             if x:
-                for k in ("attribute", "add_image_link"):
-                    if x.get(k):
+                for k in ("attribute", "add_image_link", "search_tag"):
+                    if x.get(k) and not r.get(k):   # 기존 값(Cafe24·스냅샷)이 비어 있을 때만 채움
                         r[k] = x[k]
                 n += 1
-        log(f"  자동값(auto_fields.tsv) 적용 {n}건 — 상품속성·추가이미지")
+        log(f"  자동값(auto_fields.tsv) 적용 {n}건 — 빈 칸만(상품속성·추가이미지·검색태그)")
 
     if not a.mirror_only:
         ov = load_overrides()
