@@ -105,7 +105,7 @@ COLUMNS = [
     "naver_category", "condition", "order_made", "product_flag",
     "model_number", "brand", "maker", "origin", "event_words", "benefit_price",
     "search_tag", "minimum_purchase_quantity", "review_count", "shipping",
-    "attribute", "option_detail", "age_group", "gender",
+    "attribute", "option_detail", "age_group", "gender", "shipping_settings",
 ]
 LOCKED = {"id", "price_pc", "price_mobile", "normal_price", "benefit_price",
           "link", "mobile_link", "shipping", "review_count"}
@@ -462,6 +462,11 @@ def validate(rows):
         if BANNED_CHARS.search(t): warns.append(f"#{pid} 상품명 특수문자 '{BANNED_CHARS.search(t).group()}'")
         if not r["image_link"].startswith(("http://", "https://")): errs.append(f"#{pid} 이미지 URL")
         if len(r["image_link"]) > 255: errs.append(f"#{pid} 이미지 URL 255자 초과")
+        ss = r.get("shipping_settings") or ""
+        if ss and ss.count("^") != 11:
+            warns.append(f"#{pid} shipping_settings 구분자(^) 11개 아님 → 비움"); r["shipping_settings"] = ""
+        if len(r.get("event_words") or "") > 100:
+            warns.append(f"#{pid} event_words 100자 초과 → 비움"); r["event_words"] = ""
         od = r.get("option_detail") or ""
         if od:
             parts = od.split("|")
@@ -675,11 +680,11 @@ def main():
         for r in rows:
             x = auto.get(r["id"])
             if x:
-                for k in ("attribute", "add_image_link", "search_tag"):
+                for k in ("attribute", "add_image_link", "search_tag", "event_words", "shipping_settings", "naver_category"):
                     if x.get(k) and not r.get(k):   # 기존 값(Cafe24·스냅샷)이 비어 있을 때만 채움
                         r[k] = x[k]
                 n += 1
-        log(f"  자동값(auto_fields.tsv) 적용 {n}건 — 빈 칸만(상품속성·추가이미지·검색태그)")
+        log(f"  자동값(auto_fields.tsv) 적용 {n}건 — 빈 칸만(상품속성·추가이미지·검색태그·이벤트문구·배송부가정보·네이버카테고리)")
 
     if not a.mirror_only:
         ov = load_overrides()
